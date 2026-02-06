@@ -14,11 +14,14 @@ export type Reservation = {
   notes?: string | null;
   utm_source?: string | null;
   utm_campaign?: string | null;
+  utm_medium?: string | null;
+  utm_content?: string | null;
+  utm_term?: string | null;
   unitId?: string | null;   // NOVO
   areaId?: string | null;   // NOVO
   areaName?: string | null; // NOVO (denormalizado)
   source?: string | null;
-  status: 'AWAITING_CHECKIN' | 'CHECKED_IN';
+  status: 'AWAITING_CHECKIN' | 'CHECKED_IN' | 'NO_SHOW';
   qrToken: string;
   qrExpiresAt?: string | null;
   checkedInAt?: string | null;

@@ -14,6 +14,8 @@ import { useAreasByUnit } from './hooks/useAreasByUnit';
 import AreasPage from './AreasPage';
 import UsersPage from './UsersPage';
 import CheckinPage from './CheckinPage';
+import DashboardPage from './DashboardPage';
+import LogsPage from './LogsPage';
 import { ensureAnalyticsReady, setActiveUnitPixelFromUnit } from '../lib/analytics';
 import { createBlock, updateBlock, deleteBlock } from './hooks/useBlocks';
 
@@ -225,6 +227,11 @@ const RefreshIcon = () => (
 const TrashIcon = () => (
   <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" role="img" aria-hidden="true" className="block">
     <path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M19 6l-1 14H6L5 6" /><path d="M10 11v6M14 11v6" />
+  </svg>
+);
+const NoShowIcon = () => (
+  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" role="img" aria-hidden="true" className="block">
+    <circle cx="12" cy="12" r="10" /><path d="M15 9l-6 6" /><path d="M9 9l6 6" />
   </svg>
 );
 
@@ -1271,7 +1278,26 @@ function ReservationsTable({
   }, [data, unitsById]);
 
   const [renewTarget, setRenewTarget] = React.useState<Reservation | null>(null);
-  const [qrBust, setQrBust] = React.useState<number>(0);
+  const [noShowLoading, setNoShowLoading] = React.useState<string | null>(null);
+
+  async function handleNoShow(r: Reservation) {
+    if (noShowLoading) return;
+    try {
+      setNoShowLoading(r.id);
+      const res = await api(`/v1/reservations/${r.id}/noshow`, { method: 'POST', auth: true });
+      if (res.status === 'NO_SHOW') {
+        toast.success('Marcado como No Show');
+      } else {
+        toast.success('Desmarcado No Show');
+      }
+      // Força refresh da lista
+      setFilters({ ...filters });
+    } catch (e: any) {
+      toast.error(e?.error || 'Erro ao atualizar status');
+    } finally {
+      setNoShowLoading(null);
+    }
+  }
 
   function isToday(iso?: string | null) {
     if (!iso) return false;
@@ -1344,7 +1370,8 @@ function ReservationsTable({
           {!loading && (
             <tbody>
               {data.items.map((r: Reservation) => {
-                const statusClass = r.status === 'CHECKED_IN' ? 'badge-ok' : 'badge-wait';
+                const statusClass = r.status === 'CHECKED_IN' ? 'badge-ok' : r.status === 'NO_SHOW' ? 'badge-noshow' : 'badge-wait';
+                const isNoShow = r.status === 'NO_SHOW';
                 const when = new Date(r.reservationDate).toLocaleString();
 
                 const unitLabel =
@@ -1355,8 +1382,6 @@ function ReservationsTable({
 
                 const createdAt =
                   (r as any).createdAt ?? (r as any).created_at ?? (r as any).created ?? null;
-
-                const qrUrl = apiUrl(`/v1/reservations/${r.id}/qrcode?v=${qrBust}`);
 
                 const rTypeRaw =
                   (r as any).reservationType ??
@@ -1410,19 +1435,11 @@ function ReservationsTable({
 
                     {/* Cliente */}
                     <td className="px-3 py-2 align-top min-w-[260px]">
-                      <div className="flex items-center gap-2">
-                        <img
-                          src={qrUrl}
-                          className="h-11 w-11 rounded border border-border"
-                          crossOrigin="anonymous"
-                          alt=""
-                        />
-                        <div className="leading-tight">
-                          <div className="font-medium">{(r as any).fullName}</div>
-                          <div className="text-muted text-xs max-w-[260px]">
-                            <div className="truncate">{(r as any).email || ''}</div>
-                            <div className="truncate">{[(r as any).phone]}</div>
-                          </div>
+                      <div className="leading-tight">
+                        <div className="font-medium">{(r as any).fullName}</div>
+                        <div className="text-muted text-xs max-w-[260px]">
+                          <div className="truncate">{(r as any).email || ''}</div>
+                          <div className="truncate">{[(r as any).phone]}</div>
                         </div>
                       </div>
                     </td>
@@ -1452,6 +1469,20 @@ function ReservationsTable({
                     {/* Ações */}
                     <td className="px-3 py-2 text-right align-top">
                       <div className="flex gap-2 justify-end">
+                        <IconBtn 
+                          title={isNoShow ? "Desmarcar No Show" : "Marcar No Show"} 
+                          danger={!isNoShow}
+                          onClick={() => handleNoShow(r)}
+                          disabled={noShowLoading === r.id || r.status === 'CHECKED_IN'}
+                        >
+                          {isNoShow ? (
+                            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" role="img" aria-hidden="true" className="block">
+                              <path d="M3 12l5 5L21 6" />
+                            </svg>
+                          ) : (
+                            <NoShowIcon />
+                          )}
+                        </IconBtn>
                         <IconBtn title="Editar" onClick={() => setFilters({ ...filters, showModal: true, editing: r })}><PencilIcon /></IconBtn>
                         <IconBtn title="Renovar QR" onClick={() => setRenewTarget(r)}><RefreshIcon /></IconBtn>
                         <IconBtn title="Excluir" danger onClick={() => onAskDelete(r)}><TrashIcon /></IconBtn>
@@ -1498,7 +1529,6 @@ function ReservationsTable({
             await api(`/v1/reservations/${renewTarget.id}/qr/renew`, { method: 'POST', auth: true });
             setRenewTarget(null);
             setFilters({ ...filters });
-            setQrBust(Date.now());
             toast.success('QR renovado e status atualizado.');
           } catch (e: any) {
             const msg = e?.error?.message || e?.message || 'Erro ao renovar QR.';
@@ -1598,8 +1628,6 @@ function FiltersBar({ value, onChange }: { value: any; onChange: (v: any) => voi
       </div>
 
       <div className="flex gap-2">
-        <button className="btn" onClick={() => onChange({ ...value })}>Atualizar</button>
-
         {/* Botão Exportar Excel (verde) */}
         <button
           className="btn btn-primary text-white"
@@ -1702,10 +1730,15 @@ function ReservationModal({
       unitId: form.unitId || null,
       areaId: form.areaId || null,
 
-      utm_source: form.utm_source || null,
+      utm_source: form.utm_source || "Manual",
       utm_campaign: form.utm_campaign || null,
-      source: form.source || null,
+      source: form.utm_source || "Manual",
     };
+
+    // Adiciona status apenas na edição
+    if (editing && form.status) {
+      payload.status = form.status;
+    }
 
     if (editing && !isAdmin) {
       delete payload.utm_source;
@@ -1829,6 +1862,23 @@ function ReservationModal({
               <span>Source</span>
               <input className={`input py-2 ${lockMarketing ? 'opacity-60 cursor-not-allowed' : ''}`} value={form.source || ''} onChange={(e) => set('source', e.target.value)} placeholder="Origem (ex.: WhatsApp, Site, Balcão)" disabled={saving || lockMarketing} />
             </label>
+
+            {/* Status - apenas na edição */}
+            {editing && (
+              <label className="md:col-span-2">
+                <span>Status</span>
+                <select
+                  className="input py-2"
+                  value={form.status || 'AWAITING_CHECKIN'}
+                  onChange={(e) => set('status', e.target.value)}
+                  disabled={saving}
+                >
+                  <option value="AWAITING_CHECKIN">Aguardando Check-in</option>
+                  <option value="CHECKED_IN">Check-in Realizado</option>
+                  <option value="NO_SHOW">No Show</option>
+                </select>
+              </label>
+            )}
           </div>
         </div>
 
@@ -1883,7 +1933,7 @@ function ReservationsPanel() {
       unitId: filters.unitId || undefined,
       unitSlug: filters.unitSlug || undefined,
       areaId: filters.areaId || undefined,
-      q: (searchDebounced || undefined) as string | undefined,
+      search: (searchDebounced || undefined) as string | undefined,
       from: localToISOStart(filters.from),
       to: localToISOEnd(filters.to),
     };
@@ -1988,7 +2038,7 @@ function IconBtn({
 export default function App() {
   const { token, user } = useStore();
   const isAdmin = user?.role === 'ADMIN';
-  const [tab, setTab] = useState<'reservas' | 'bloqueios' | 'unidades' | 'areas' | 'usuarios'>('reservas');
+  const [tab, setTab] = useState<'dashboard' | 'reservas' | 'bloqueios' | 'unidades' | 'areas' | 'usuarios' | 'logs'>('reservas');
 
   const isCheckinRoute = typeof window !== 'undefined' && window.location.pathname.includes('/checkin');
 
@@ -2065,7 +2115,9 @@ export default function App() {
           ) : (
             <>
               <NavTabs active={tab} onChange={setTab} isAdmin={isAdmin} />
-              {tab === 'reservas' ? (
+              {tab === 'dashboard' ? (
+                <DashboardPage />
+              ) : tab === 'reservas' ? (
                 <ReservationsPanel />
               ) : tab === 'bloqueios' ? (
                 <BlockReservationsPanel />
@@ -2073,6 +2125,8 @@ export default function App() {
                 <UnitsPage />
               ) : tab === 'areas' ? (
                 <AreasPage />
+              ) : tab === 'logs' ? (
+                <LogsPage />
               ) : (
                 <UsersPage />
               )}
@@ -2090,16 +2144,28 @@ function NavTabs({
   onChange,
   isAdmin,
 }: {
-  active: 'reservas' | 'bloqueios' | 'unidades' | 'areas' | 'usuarios';
-  onChange: (t: 'reservas' | 'bloqueios' | 'unidades' | 'areas' | 'usuarios') => void;
+  active: 'dashboard' | 'reservas' | 'bloqueios' | 'unidades' | 'areas' | 'usuarios' | 'logs';
+  onChange: (t: 'dashboard' | 'reservas' | 'bloqueios' | 'unidades' | 'areas' | 'usuarios' | 'logs') => void;
   isAdmin: boolean;
 }) {
   const items: Array<{
-    key: 'reservas' | 'bloqueios' | 'unidades' | 'areas' | 'usuarios';
+    key: 'dashboard' | 'reservas' | 'bloqueios' | 'unidades' | 'areas' | 'usuarios' | 'logs';
     label: string;
     icon: React.ReactNode;
     adminOnly?: boolean;
   }> = [
+      {
+        key: 'dashboard',
+        label: 'Dashboard',
+        icon: (
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M3 3v18h18" />
+            <path d="M7 15v3" />
+            <path d="M12 11v7" />
+            <path d="M17 7v11" />
+          </svg>
+        ),
+      },
       {
         key: 'reservas',
         label: 'Reservas',
@@ -2155,6 +2221,20 @@ function NavTabs({
             <circle cx="9" cy="7" r="4" />
             <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
             <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+          </svg>
+        ),
+      },
+      {
+        key: 'logs',
+        label: 'Logs',
+        adminOnly: true,
+        icon: (
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+            <line x1="16" y1="13" x2="8" y2="13" />
+            <line x1="16" y1="17" x2="8" y2="17" />
+            <polyline points="10 9 9 9 8 9" />
           </svg>
         ),
       },
